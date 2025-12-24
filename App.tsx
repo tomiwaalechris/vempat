@@ -66,327 +66,24 @@ import {
 } from "firebase/firestore";
 
 import { auth, db } from './firebase';
+import { createProduct as repoCreateProduct, updateProduct as repoUpdateProduct, deleteProduct as repoDeleteProduct, createReceipt as repoCreateReceipt } from './src/services/repository';
 import { Product, Sale, FeedType, CartItem, UserRole } from './types';
-import { INITIAL_PRODUCTS, APP_THEME, SECRET_SUPERADMIN_CODE } from './constants';
+import { APP_THEME, SECRET_SUPERADMIN_CODE } from './constants';
 import { getGeminiAdvisor } from './geminiService';
 
 const CURRENCY = APP_THEME.currency;
 
-// --- Sub-components ---
+// --- Sub-components (extracted) ---
+import Toast from './components/Toast';
+import ReceiptModal from './components/ReceiptModal';
+import StatCard from './components/StatCard';
+import ViewWrapper from './components/ViewWrapper';
+import LoginView from './components/LoginView';
+import RegistrationView from './components/RegistrationView';
+import SignUpView from './components/SignUpView';
+import SidebarItem from './components/SidebarItem';
 
-const Toast: React.FC<{ message: string, type: 'success' | 'error' | 'info', onClose: () => void }> = ({ message, type, onClose }) => {
-  useEffect(() => {
-    const timer = setTimeout(onClose, 3000);
-    return () => clearTimeout(timer);
-  }, [onClose]);
-
-  const bgColor = type === 'success' ? 'bg-emerald-600' : type === 'error' ? 'bg-red-600' : 'bg-sky-600';
-
-  return (
-    <div className={`fixed bottom-4 right-4 ${bgColor} text-white px-6 py-3 rounded-2xl shadow-2xl z-[200] flex items-center gap-3 animate-in slide-in-from-right-10 duration-300`}>
-      {type === 'success' ? <CheckCircle2 className="w-5 h-5" /> : <Info className="w-5 h-5" />}
-      <span className="font-bold text-sm">{message}</span>
-      <button onClick={onClose} className="ml-2 opacity-70 hover:opacity-100"><X className="w-4 h-4" /></button>
-    </div>
-  );
-};
-
-const ReceiptModal = ({ sale, onClose }: { sale: any, onClose: () => void }) => (
-  <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
-    <div className="bg-white rounded-[2rem] w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200 shadow-2xl">
-      <div className="p-8 flex flex-col items-center border-b border-dashed border-slate-200">
-        <div className="w-12 h-12 bg-sky-100 text-sky-600 rounded-full flex items-center justify-center mb-4">
-          <Fish className="w-6 h-6" />
-        </div>
-        <h3 className="text-xl font-black text-slate-900">VEMPAT FISH FEED</h3>
-        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Transaction Receipt</p>
-      </div>
-      
-      <div className="p-8 space-y-4">
-        <div className="flex justify-between text-xs font-medium text-slate-500">
-          <span>Date: {new Date().toLocaleDateString()}</span>
-          <span>Time: {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-        </div>
-        
-        <div className="space-y-3 py-4">
-          {sale.items.map((item: any, i: number) => (
-            <div key={i} className="flex justify-between items-start text-sm">
-              <div className="pr-4">
-                <p className="font-bold text-slate-800">{item.brand} {item.particleSize}</p>
-                <p className="text-[10px] text-slate-400">{item.quantity} x {CURRENCY}{item.price.toLocaleString()}</p>
-              </div>
-              <span className="font-bold text-slate-900 shrink-0">{CURRENCY}{(item.quantity * item.price).toLocaleString()}</span>
-            </div>
-          ))}
-        </div>
-
-        <div className="border-t border-dashed border-slate-200 pt-4 space-y-2">
-          <div className="flex justify-between items-center text-slate-500 text-sm">
-            <span>Subtotal</span>
-            <span>{CURRENCY}{sale.total.toLocaleString()}</span>
-          </div>
-          <div className="flex justify-between items-center text-lg font-black text-slate-900">
-            <span>Total Paid</span>
-            <span>{CURRENCY}{sale.total.toLocaleString()}</span>
-          </div>
-        </div>
-
-        <div className="bg-slate-50 rounded-xl p-3 text-[10px] text-slate-400 text-center italic">
-          Thank you for choosing Vempat. We wish your fish a healthy growth!
-        </div>
-      </div>
-
-      <div className="p-6 bg-slate-50 flex gap-3">
-        <button 
-          onClick={() => window.print()}
-          className="flex-1 bg-white border border-slate-200 py-3 rounded-xl font-bold text-slate-700 flex items-center justify-center gap-2 hover:bg-slate-100 transition-all"
-        >
-          <Printer className="w-4 h-4" /> Print
-        </button>
-        <button 
-          onClick={onClose}
-          className="flex-1 bg-sky-600 py-3 rounded-xl font-bold text-white shadow-lg shadow-sky-600/20 hover:bg-sky-700 transition-all"
-        >
-          Done
-        </button>
-      </div>
-    </div>
-  </div>
-);
-
-const StatCard = ({ title, value, icon: Icon, color, subtitle }: { title: string, value: string | number, icon: any, color: string, subtitle?: string }) => (
-  <div className="bg-white p-5 md:p-6 rounded-2xl shadow-sm border border-slate-100 flex items-start justify-between transition-all hover:shadow-md">
-    <div className="min-w-0">
-      <p className="text-xs md:text-sm font-medium text-slate-500 mb-1">{title}</p>
-      <h3 className="text-xl md:text-2xl font-bold text-slate-900 truncate">{value}</h3>
-      {subtitle && <p className="text-[10px] text-slate-400 mt-1 truncate">{subtitle}</p>}
-    </div>
-    <div className={`p-2.5 md:p-3 rounded-xl shrink-0 ${color}`}>
-      <Icon className="w-5 h-5 md:w-6 md:h-6 text-white" />
-    </div>
-  </div>
-);
-
-const ViewWrapper = ({ title, children, actions }: { title: string, children?: React.ReactNode, actions?: React.ReactNode }) => (
-  <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 h-full flex flex-col">
-    <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 md:mb-8 gap-4 shrink-0 px-1">
-      <h1 className="text-xl md:text-2xl font-bold text-slate-800">{title}</h1>
-      <div className="flex items-center gap-3 w-full md:w-auto">
-        {actions}
-      </div>
-    </div>
-    <div className="flex-1 min-h-0">
-      {children}
-    </div>
-  </div>
-);
-
-// --- Login Component ---
-
-const LoginView = ({ onLogin }: { onLogin: (role: UserRole, name: string) => void }) => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [showSignUp, setShowSignUp] = useState(false);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    if (!email.trim() || !password.trim()) {
-      setError('Please enter email and password');
-      return;
-    }
-    setLoading(true);
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-      // onAuthStateChanged will pick up the user and load metadata
-    } catch (err: any) {
-      console.error('signIn failed', err);
-      setError(err?.message || 'Login failed');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (showSignUp) return <SignUpView onSignUp={(role, name) => { setShowSignUp(false); onLogin(role, name); }} />;
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-sky-600 to-blue-900 flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-white rounded-[2.5rem] shadow-2xl p-8 md:p-12 animate-in zoom-in-95 duration-500">
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-sky-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-sky-600/30 mx-auto mb-4">
-            <Fish className="w-10 h-10" />
-          </div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight">VEMPAT</h1>
-          <p className="text-slate-500 mt-2 font-medium">Cloud Inventory System</p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-4">
-            <div className="relative">
-              <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-              <input
-                type="email"
-                placeholder="Email address"
-                className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-sky-500/20 outline-none transition-all font-medium text-slate-700 placeholder:text-slate-400"
-                value={email}
-                onChange={(e) => {setEmail(e.target.value); setError('');}}
-              />
-            </div>
-
-            <div className="relative">
-              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-              <input
-                type="password"
-                placeholder="Password"
-                className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-sky-500/20 outline-none transition-all font-medium text-slate-700 placeholder:text-slate-400"
-                value={password}
-                onChange={(e) => {setPassword(e.target.value); setError('');}}
-              />
-            </div>
-          </div>
-
-          {error && <p className="text-red-500 text-sm font-bold text-center px-4">{error}</p>}
-
-          <div className="flex gap-2 items-center justify-between">
-            <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-4 bg-sky-600 hover:bg-sky-700 text-white font-bold rounded-2xl shadow-xl shadow-sky-600/20 flex items-center justify-center gap-2 group transition-all transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <>Access System <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" /></>}
-          </button>
-            <button type="button" onClick={() => setShowSignUp(true)} className="text-sm text-slate-500 underline ml-2">Sign up</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-};
-
-const RegistrationView = ({ onRegister }: { onRegister: (name: string, email?: string) => void }) => {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [code, setCode] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    if (!name.trim() || !email.trim() || !password.trim() || !code.trim()) return setError('Name, email, password and code required');
-    // simple email validation
-    const emailRe = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-    if (!emailRe.test(email)) return setError('Enter a valid email address');
-    if (code !== SECRET_SUPERADMIN_CODE) return setError('Invalid registration code');
-    setLoading(true);
-    try {
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
-      try {
-        await setDoc(doc(db, 'users', cred.user.uid), { name, email, role: UserRole.SUPER_ADMIN, createdAt: new Date().toISOString() });
-      } catch (e) {
-        console.error('failed to create super admin user doc', e);
-        setError('Failed to register. Check console.');
-        setLoading(false);
-        return;
-      }
-      onRegister(name, email);
-      // clear hash to hide page
-      window.location.hash = '';
-    } catch (err: any) {
-      console.error(err);
-      setError(err?.message || 'Registration failed');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-sky-600 to-blue-900 flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-white rounded-[2.5rem] shadow-2xl p-8 md:p-12 animate-in zoom-in-95 duration-500">
-        <div className="text-center mb-6">
-          <h2 className="text-xl font-black">Hidden Super Admin Registration</h2>
-          <p className="text-sm text-slate-500">Enter the secret code to register a Super Admin.</p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <label className="block text-sm font-bold text-slate-600">Full name</label>
-          <input aria-label="Full name" type="text" placeholder="Full name" value={name} onChange={e => setName(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border rounded-2xl" />
-
-          <label className="block text-sm font-bold text-slate-600">Email address</label>
-          <input aria-label="Email address" type="email" placeholder="Email address" value={email} onChange={e => setEmail(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border rounded-2xl" />
-
-          <label className="block text-sm font-bold text-slate-600">Password</label>
-          <input aria-label="Password" type="password" placeholder="Password for account" value={password} onChange={e => setPassword(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border rounded-2xl" />
-
-          <label className="block text-sm font-bold text-slate-600">Registration code</label>
-          <input aria-label="Registration code" type="text" placeholder="Secret registration code" value={code} onChange={e => setCode(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border rounded-2xl" />
-          {error && <p className="text-red-500 text-sm">{error}</p>}
-          <div className="flex gap-2">
-            <button type="submit" disabled={loading} className="flex-1 py-3 bg-indigo-600 text-white rounded-2xl font-bold">{loading ? 'Registering...' : 'Register Super Admin'}</button>
-            <button type="button" onClick={() => { window.location.hash=''; }} className="py-3 px-4 bg-slate-100 rounded-2xl">Cancel</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-};
-
-const SignUpView = ({ onSignUp }: { onSignUp: (role: UserRole, name: string) => void }) => {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    if (!name.trim() || !email.trim() || !password.trim()) return setError('Name, email and password required');
-    if (password !== confirm) return setError('Passwords do not match');
-    setLoading(true);
-    try {
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
-      try {
-        await setDoc(doc(db, 'users', cred.user.uid), { name, email, role: UserRole.SALES, createdAt: new Date().toISOString() });
-      } catch (e) {
-        console.error('failed to create user doc', e);
-      }
-      onSignUp(UserRole.SALES, name);
-    } catch (err: any) {
-      console.error('signup failed', err);
-      setError(err?.message || 'Signup failed');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-sky-600 to-blue-900 flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-white rounded-[2.5rem] shadow-2xl p-8 md:p-12 animate-in zoom-in-95 duration-500">
-        <div className="text-center mb-6">
-          <h2 className="text-xl font-black">Create Account</h2>
-          <p className="text-sm text-slate-500">Create an account to access Vempat.</p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <input type="text" placeholder="Full name" value={name} onChange={e => setName(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border rounded-2xl" />
-          <input type="email" placeholder="Email address" value={email} onChange={e => setEmail(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border rounded-2xl" />
-          <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border rounded-2xl" />
-          <input type="password" placeholder="Confirm password" value={confirm} onChange={e => setConfirm(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border rounded-2xl" />
-          {error && <p className="text-red-500 text-sm">{error}</p>}
-          <div className="flex gap-2">
-            <button type="submit" disabled={loading} className="flex-1 py-3 bg-emerald-600 text-white rounded-2xl font-bold">{loading ? 'Creating...' : 'Create Account'}</button>
-            <button type="button" onClick={() => { window.location.hash = ''; }} className="py-3 px-4 bg-slate-100 rounded-2xl">Cancel</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-};
+// --- Login/Registration/Signup components are now extracted into `components/` ---
 
 // --- Main App ---
 
@@ -406,6 +103,10 @@ const App: React.FC = () => {
   const [aiResponse, setAiResponse] = useState<string>("");
   const [aiQuery, setAiQuery] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [queuedCount, setQueuedCount] = useState<number>(0);
+  const [failedCount, setFailedCount] = useState<number>(0);
+  const [syncing, setSyncing] = useState<boolean>(false);
   
   // POS & Receipt States
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -451,14 +152,8 @@ const App: React.FC = () => {
     const qProducts = query(collection(db, "products"), orderBy("brand", "asc"));
     const unsubProducts = onSnapshot(qProducts, (snapshot) => {
       const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Product[];
-      
-      // Auto-seed if empty
-      if (prods.length === 0 && initialDataLoading) {
-        seedInitialData();
-      } else {
-        setProducts(prods);
-        setInitialDataLoading(false);
-      }
+      setProducts(prods);
+      setInitialDataLoading(false);
     });
 
     const qSales = query(collection(db, "sales"), orderBy("date", "desc"), limit(100));
@@ -485,6 +180,8 @@ const App: React.FC = () => {
         if (uDoc.exists()) {
           const d: any = uDoc.data();
           setUserMeta({ name: d.name || '', role: d.role || UserRole.SALES });
+          // cache for offline use
+          try { (await import('./src/auth/offline')).cacheUserProfile({ uid: user.uid, email: user.email }, { name: d.name || '', role: d.role || UserRole.SALES }); } catch (e) {}
         } else {
           // create a default user doc for newcomers (Sales role by default)
           const display = user.displayName || (userMeta ? `${userMeta.name}|${userMeta.role}` : '');
@@ -493,6 +190,7 @@ const App: React.FC = () => {
           const role = (rolePart as UserRole) || UserRole.SALES;
           await setDoc(doc(db, 'users', user.uid), { name, role, createdAt: new Date().toISOString() });
           setUserMeta({ name, role });
+          try { (await import('./src/auth/offline')).cacheUserProfile({ uid: user.uid, email: user.email }, { name, role }); } catch (e) {}
         }
       } catch (err) {
         console.warn('failed to load user metadata', err);
@@ -503,12 +201,7 @@ const App: React.FC = () => {
   }, [user]);
 
   const seedInitialData = async () => {
-    const batch = writeBatch(db);
-    INITIAL_PRODUCTS.forEach(p => {
-      const docRef = doc(collection(db, "products"));
-      batch.set(docRef, { ...p, id: docRef.id });
-    });
-    await batch.commit();
+    // Function removed - admins now manually add products
   };
 
   // User management helpers (super admin)
@@ -566,6 +259,30 @@ const App: React.FC = () => {
     showToast("Logged out successfully", "info");
   };
 
+  // Monitor online/offline and queue stats
+  useEffect(() => {
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+
+    let mounted = true;
+    const poll = async () => {
+      try {
+        const info = await (await import('./src/services/repository')).getQueueInfo();
+        if (!mounted) return;
+        setQueuedCount(info.pending || 0);
+        setFailedCount(info.failed || 0);
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    poll();
+    const iv = setInterval(poll, 5000);
+    return () => { mounted = false; clearInterval(iv); window.removeEventListener('online', onOnline); window.removeEventListener('offline', onOffline); };
+  }, []);
+
   const addToCart = (product: Product) => {
     setCart(prev => {
       const existing = prev.find(item => item.productId === product.id);
@@ -609,48 +326,47 @@ const App: React.FC = () => {
     
     try {
       const total = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
-      
-      // 1. Create sale records in Firestore
-      const batch = writeBatch(db);
-      
-      cart.forEach(item => {
-        const saleRef = doc(collection(db, "sales"));
-        batch.set(saleRef, {
+
+      // Persist sales and stock updates locally and enqueue for remote sync
+      for (const item of cart) {
+        const saleId = (crypto as any)?.randomUUID ? (crypto as any).randomUUID() : `sale-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+        const sale: Sale = {
+          id: saleId,
           productId: item.productId,
           productName: `${item.brand} ${item.particleSize} ${item.type} (${item.weight}kg)`,
           quantity: item.quantity,
           totalPrice: item.price * item.quantity,
           customerName: customerName,
-          date: new Date().toLocaleDateString()
-        });
+          date: new Date().toISOString()
+        };
+        await repoCreateReceipt(sale);
 
-        // 2. Update stock
-        const prodRef = doc(db, "products", item.productId);
+        // update local product stock and enqueue update
         const currentProd = products.find(p => p.id === item.productId);
         if (currentProd) {
-          batch.update(prodRef, { stock: currentProd.stock - item.quantity });
+          const updated = { ...currentProd, stock: Math.max(0, currentProd.stock - item.quantity) };
+          await repoUpdateProduct(updated);
         }
-      });
-
-      await batch.commit();
+      }
 
       setRecentSale({ items: [...cart], total, customerName });
       setCart([]);
       setCustomerName("Walk-in Customer");
-      showToast("Sale Completed & Cloud Synced!", "success");
+      showToast("Sale recorded locally and queued for sync", "success");
     } catch (err) {
-      showToast("Sale failed. Check connection.", "error");
+      console.error('POS checkout failed', err);
+      showToast("Sale failed to record locally.", "error");
     }
   };
 
   const handleUpdateStock = async (productId: string, amount: number) => {
     if (!isAdmin) return;
     try {
-      const prodRef = doc(db, "products", productId);
       const prod = products.find(p => p.id === productId);
       if (prod) {
-        await updateDoc(prodRef, { stock: Math.max(0, prod.stock + amount) });
-        showToast("Stock updated on Cloud", "success");
+        const updated = { ...prod, stock: Math.max(0, prod.stock + amount) };
+        await repoUpdateProduct(updated);
+        showToast("Stock updated locally and queued", "success");
       }
     } catch (err) {
       showToast("Update failed.", "error");
@@ -674,10 +390,12 @@ const App: React.FC = () => {
         stock: newProduct.stock || 0,
         minStockThreshold: newProduct.minStockThreshold || 10
       };
-      await addDoc(collection(db, "products"), prodData);
+      const id = (crypto as any)?.randomUUID ? (crypto as any).randomUUID() : `prod-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+      const product: Product = { id, ...(prodData as Product) } as Product;
+      await repoCreateProduct(product);
       setIsAddProductOpen(false);
       setNewProduct({ brand: '', type: FeedType.GROWER, particleSize: '4mm', proteinPercent: 38, weightKg: 15, pricePerBag: 15000, stock: 0, minStockThreshold: 10 });
-      showToast("New feed added to Cloud", "success");
+      showToast("Product saved locally and queued for sync", "success");
     } catch (err) {
       showToast("Failed to save product.", "error");
     }
@@ -687,8 +405,8 @@ const App: React.FC = () => {
     if (!isAdmin) return;
     if (!confirm("Are you sure? This is permanent in the cloud.")) return;
     try {
-      await deleteDoc(doc(db, "products", productId));
-      showToast("Product deleted", "info");
+      await repoDeleteProduct(productId);
+      showToast("Product deleted locally and queued for remote delete", "info");
     } catch (err) {
       showToast("Delete failed", "error");
     }
@@ -709,7 +427,13 @@ const App: React.FC = () => {
   }
 
   if (!user) {
-    return <LoginView onLogin={(role, name) => setUserMeta({ role, name })} />;
+    return <LoginView onLogin={(role: any, name: string, offlineUser?: any) => {
+      setUserMeta({ role, name });
+      if (offlineUser) {
+        // set a synthetic user object so app proceeds in offline mode
+        setUser(offlineUser);
+      }
+    }} />;
   }
 
   if (initialDataLoading) {
@@ -723,6 +447,19 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
+      {/* Sync / Network status indicator */}
+      <div className="fixed top-4 right-4 z-60 flex items-center gap-3">
+        <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium ${isOnline ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'} border ${isOnline ? 'border-emerald-100' : 'border-rose-100'}`}>
+          <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-600' : 'bg-rose-600'}`}></div>
+          <div>{isOnline ? 'Online' : 'Offline'}</div>
+        </div>
+
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium bg-slate-50 border border-slate-100">
+          <div className="text-slate-500">Queue</div>
+          <div className="bg-slate-900 text-white px-2 py-0.5 rounded-full text-xs">{queuedCount}</div>
+          {syncing && <Loader2 className="w-4 h-4 text-slate-500 animate-spin" />}
+        </div>
+      </div>
       {recentSale && <ReceiptModal sale={recentSale} onClose={() => setRecentSale(null)} />}
       <div className="z-[300]">
         {toasts.map(t => <Toast key={t.id} message={t.message} type={t.type} onClose={() => removeToast(t.id)} />)}
@@ -1206,13 +943,5 @@ const App: React.FC = () => {
     </div>
   );
 };
-
-const SidebarItem = ({ icon: Icon, label, active, onClick }: { icon: any, label: string, active: boolean, onClick: () => void }) => (
-  <button onClick={onClick} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group ${active ? 'bg-sky-50 text-sky-600' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'}`}>
-    <Icon className={`w-5 h-5 ${active ? 'text-sky-600' : 'text-slate-400 group-hover:text-slate-600'}`} />
-    <span className="font-medium text-sm">{label}</span>
-    {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-sky-600" />}
-  </button>
-);
 
 export default App;
