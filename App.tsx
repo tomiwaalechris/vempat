@@ -595,7 +595,7 @@ const App: React.FC = () => {
             <Menu className="w-6 h-6" />
           </button>
 
-          <div className="flex-1 flex items-center max-w-xl mx-auto px-4">
+          <div className="flex-1 flex items-center max-w-xl mx-auto px-4 min-w-0">
             <div className="relative w-full">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input 
@@ -666,15 +666,17 @@ const App: React.FC = () => {
             <ViewWrapper title="Quick Sale (POS)">
               <div className="relative grid grid-cols-1 lg:grid-cols-3 gap-6 h-full pb-24 lg:pb-0">
                 {/* Floating cart indicator (desktop) - prominent, minimal */}
-                <div className="hidden lg:flex items-center gap-3 absolute top-4 right-6 z-40">
-                  <div className="bg-white/90 backdrop-blur-sm border border-slate-100 rounded-full p-3 shadow-2xl flex items-center gap-3">
-                    <ShoppingCart className="w-5 h-5 text-sky-600" />
-                    <div className="flex flex-col leading-tight">
-                      <span className="text-xs text-slate-500">Cart</span>
-                      <span className="text-sm font-black text-slate-900">{cart.length} items</span>
+                {cart.length > 0 && (
+                  <div className="hidden lg:flex items-center gap-3 absolute top-4 right-6 z-40">
+                    <div className="bg-white/90 backdrop-blur-sm border border-slate-100 rounded-full p-3 shadow-2xl flex items-center gap-3">
+                      <ShoppingCart className="w-5 h-5 text-sky-600" />
+                      <div className="flex flex-col leading-tight">
+                        <span className="text-xs text-slate-500">Cart</span>
+                        <span className="text-sm font-black text-slate-900">{cart.length} items</span>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
                 <div className="lg:col-span-2 flex flex-col gap-4 overflow-y-auto pr-1">
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4">
                     {filteredProducts.map(p => (
@@ -702,7 +704,7 @@ const App: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="lg:col-span-1">
+                <div className={cart.length === 0 ? 'hidden lg:col-span-1' : 'lg:col-span-1'}>
                   <div className="fixed bottom-4 left-4 right-4 lg:static lg:right-auto lg:left-auto lg:bottom-auto lg:max-w-[360px] z-50">
                     <div className="bg-white/95 backdrop-blur-sm border border-slate-100 rounded-3xl p-5 md:p-6 flex flex-col shadow-2xl h-full max-h-[85vh] lg:max-h-[calc(100vh-12rem)] ring-1 ring-sky-50">
                     <div className="flex items-center justify-between mb-4 md:mb-6">
