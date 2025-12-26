@@ -28,7 +28,9 @@ import {
   ArrowRight,
   Printer,
   Info,
-  Loader2
+  Loader2,
+  FileText,
+  BarChart3
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -67,7 +69,7 @@ import {
 
 import { auth, db } from './firebase';
 import { createProduct as repoCreateProduct, updateProduct as repoUpdateProduct, deleteProduct as repoDeleteProduct, createReceipt as repoCreateReceipt } from './src/services/repository';
-import { Product, Sale, FeedType, CartItem, UserRole } from './types';
+import { Product, Sale, FeedType, CartItem, UserRole, StockMovement } from './types';
 import { APP_THEME, SECRET_SUPERADMIN_CODE } from './constants';
 import { getGeminiAdvisor } from './geminiService';
 
@@ -82,6 +84,10 @@ import LoginView from './components/LoginView';
 import RegistrationView from './components/RegistrationView';
 import SignUpView from './components/SignUpView';
 import SidebarItem from './components/SidebarItem';
+import StockMovementHistory from './components/StockMovementHistory';
+import SupplierManagement from './components/SupplierManagement';
+import PurchaseOrderManagement from './components/PurchaseOrderManagement';
+import ReportsDashboard from './components/ReportsDashboard';
 
 // --- Login/Registration/Signup components are now extracted into `components/` ---
 
@@ -97,7 +103,7 @@ const App: React.FC = () => {
   const [sales, setSales] = useState<Sale[]>([]);
   const [toasts, setToasts] = useState<{id: number, message: string, type: 'success' | 'error' | 'info'}[]>([]);
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'sales' | 'advisor' | 'pos'>('pos');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'sales' | 'advisor' | 'pos' | 'stock-history' | 'suppliers' | 'purchase-orders' | 'reports'>('pos');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResponse, setAiResponse] = useState<string>("");
@@ -107,6 +113,11 @@ const App: React.FC = () => {
   const [queuedCount, setQueuedCount] = useState<number>(0);
   const [failedCount, setFailedCount] = useState<number>(0);
   const [syncing, setSyncing] = useState<boolean>(false);
+  
+  // New state for inventory management features
+  const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<any[]>([]);
   
   // POS & Receipt States
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -162,9 +173,30 @@ const App: React.FC = () => {
       setSales(s);
     });
 
+    const qMovements = query(collection(db, "stockMovements"), orderBy("timestamp", "desc"));
+    const unsubMovements = onSnapshot(qMovements, (snapshot) => {
+      const m = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as StockMovement[];
+      setStockMovements(m);
+    });
+
+    const qSuppliers = query(collection(db, "suppliers"), orderBy("name", "asc"));
+    const unsubSuppliers = onSnapshot(qSuppliers, (snapshot) => {
+      const s = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setSuppliers(s);
+    });
+
+    const qPOs = query(collection(db, "purchaseOrders"), orderBy("orderDate", "desc"));
+    const unsubPOs = onSnapshot(qPOs, (snapshot) => {
+      const p = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setPurchaseOrders(p);
+    });
+
     return () => {
       unsubProducts();
       unsubSales();
+      unsubMovements();
+      unsubSuppliers();
+      unsubPOs();
     };
   }, [user]);
 
@@ -259,10 +291,16 @@ const App: React.FC = () => {
     showToast("Logged out successfully", "info");
   };
 
-  // Monitor online/offline and queue stats
+  // Monitor online/offline and queue stats + auto-sync
   useEffect(() => {
-    const onOnline = () => setIsOnline(true);
-    const onOffline = () => setIsOnline(false);
+    const onOnline = () => {
+      setIsOnline(true);
+      console.log('App is online - attempting sync');
+    };
+    const onOffline = () => {
+      setIsOnline(false);
+      console.log('App is offline');
+    };
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOffline);
 
@@ -273,15 +311,37 @@ const App: React.FC = () => {
         if (!mounted) return;
         setQueuedCount(info.pending || 0);
         setFailedCount(info.failed || 0);
+
+        // Auto-sync when online and there are pending items
+        if (isOnline && info.pending > 0) {
+          setSyncing(true);
+          try {
+            const { remoteHandler } = await import('./src/sync/remote');
+            const { syncNow } = await import('./src/services/repository');
+            console.log(`Syncing ${info.pending} pending items...`);
+            await syncNow(remoteHandler);
+            console.log('Sync completed, re-polling queue...');
+            // Re-poll immediately after sync to update queue count
+            const updatedInfo = await (await import('./src/services/repository')).getQueueInfo();
+            if (mounted) {
+              setQueuedCount(updatedInfo.pending || 0);
+              setFailedCount(updatedInfo.failed || 0);
+            }
+          } catch (err) {
+            console.error('auto-sync failed', err);
+          } finally {
+            setSyncing(false);
+          }
+        }
       } catch (e) {
-        // ignore
+        console.error('polling failed', e);
       }
     };
 
     poll();
     const iv = setInterval(poll, 5000);
     return () => { mounted = false; clearInterval(iv); window.removeEventListener('online', onOnline); window.removeEventListener('offline', onOffline); };
-  }, []);
+  }, [isOnline]);
 
   const addToCart = (product: Product) => {
     setCart(prev => {
@@ -405,9 +465,12 @@ const App: React.FC = () => {
     if (!isAdmin) return;
     if (!confirm("Are you sure? This is permanent in the cloud.")) return;
     try {
+      // Optimistic delete: remove from UI immediately
+      setProducts(prev => prev.filter(p => p.id !== productId));
       await repoDeleteProduct(productId);
-      showToast("Product deleted locally and queued for remote delete", "info");
+      showToast("Product deleted and syncing to cloud", "success");
     } catch (err) {
+      // If deletion fails, refresh to show the product again
       showToast("Delete failed", "error");
     }
   };
@@ -552,6 +615,10 @@ const App: React.FC = () => {
             {isAdmin && (
               <>
                 <SidebarItem icon={ShoppingCart} label="History" active={activeTab === 'sales'} onClick={() => {setActiveTab('sales'); setIsSidebarOpen(false);}} />
+                <SidebarItem icon={TrendingUp} label="Stock Movements" active={activeTab === 'stock-history'} onClick={() => {setActiveTab('stock-history'); setIsSidebarOpen(false);}} />
+                <SidebarItem icon={Package} label="Suppliers" active={activeTab === 'suppliers'} onClick={() => {setActiveTab('suppliers'); setIsSidebarOpen(false);}} />
+                <SidebarItem icon={FileText} label="Purchase Orders" active={activeTab === 'purchase-orders'} onClick={() => {setActiveTab('purchase-orders'); setIsSidebarOpen(false);}} />
+                <SidebarItem icon={BarChart3} label="Reports" active={activeTab === 'reports'} onClick={() => {setActiveTab('reports'); setIsSidebarOpen(false);}} />
                 <SidebarItem icon={MessageSquare} label="AI Advisor" active={activeTab === 'advisor'} onClick={() => {setActiveTab('advisor'); setIsSidebarOpen(false);}} />
               </>
             )}
@@ -938,6 +1005,30 @@ const App: React.FC = () => {
                   </div>
                 )}
               </div>
+            </ViewWrapper>
+          )}
+
+          {activeTab === 'stock-history' && isAdmin && (
+            <ViewWrapper title="Stock Movement History">
+              <StockMovementHistory products={products} />
+            </ViewWrapper>
+          )}
+
+          {activeTab === 'suppliers' && isAdmin && (
+            <ViewWrapper title="Supplier Management">
+              <SupplierManagement products={products} />
+            </ViewWrapper>
+          )}
+
+          {activeTab === 'purchase-orders' && isAdmin && (
+            <ViewWrapper title="Purchase Orders">
+              <PurchaseOrderManagement products={products} suppliers={suppliers} />
+            </ViewWrapper>
+          )}
+
+          {activeTab === 'reports' && isAdmin && (
+            <ViewWrapper title="Reports & Analytics">
+              <ReportsDashboard sales={sales} products={products} stockMovements={stockMovements} />
             </ViewWrapper>
           )}
         </div>
